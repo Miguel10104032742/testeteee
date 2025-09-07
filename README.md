@@ -1,45 +1,153 @@
--- Coloque este script em StarterPlayerScripts ou StarterGui como LocalScript
+-- Piso que segue o jogador (ligar/desligar por botão e tecla F)
+-- Use APENAS em jogos seus (Roblox Studio). Não funciona como exploit em jogos de outras pessoas.
 
-local player = game.Players.LocalPlayer
-local autoStealEnabled = false
+-- Serviços
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
 
--- Função para criar botão na tela
-local function createButton()
-    local button = Instance.new("TextButton")
-    button.Size = UDim2.new(0, 120, 0, 40)
-    button.Position = UDim2.new(0, 10, 0, 10)
-    button.Text = "Auto Steal: OFF"
-    button.Parent = game:GetService("Players").LocalPlayer.PlayerGui:WaitForChild("ScreenGui", 3) or Instance.new("ScreenGui", player.PlayerGui)
-    button.MouseButton1Click:Connect(function()
-        autoStealEnabled = not autoStealEnabled
-        button.Text = autoStealEnabled and "Auto Steal: ON" or "Auto Steal: OFF"
-    end)
-    return button
+-- Referências do jogador
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local function getHRP()
+	local c = player.Character or player.CharacterAdded:Wait()
+	return c:WaitForChild("HumanoidRootPart")
 end
 
--- Função para detectar proximidade ao Brainrot
-local function checkProximity()
-    while true do
-        if autoStealEnabled then
-            -- Substitua "Brainrot" pelo nome do objeto/NPC do jogo
-            local brainrot = workspace:FindFirstChild("Brainrot")
-            if brainrot and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-                local distance = (brainrot.Position - player.Character.HumanoidRootPart.Position).Magnitude
-                if distance < 10 then -- distância para roubar (ajuste conforme necessário)
-                    -- Evento de roubo (substitua pelo evento real do jogo)
-                    -- Por exemplo, se for um RemoteEvent:
-                    -- game.ReplicatedStorage:FindFirstChild("StealEvent"):FireServer(brainrot)
-                    
-                    print("Roubando Brainrot!") -- Troque pelo que faz o roubo no jogo
-                end
-            end
-        end
-        wait(0.5) -- Checa a cada meio segundo
-    end
+-- Estado
+local floorActive = false
+local followConn -- RBXScriptConnection para seguir o jogador
+local floorPart -- a peça do piso
+
+-- Cria (ou garante) o piso
+local function ensureFloor()
+	if floorPart and floorPart.Parent then return end
+
+	floorPart = Instance.new("Part")
+	floorPart.Name = "PlayerFloor_" .. player.Name
+	floorPart.Size = Vector3.new(12, 1, 12)
+	floorPart.Anchored = true
+	floorPart.CanCollide = false -- começa desligado
+	floorPart.Transparency = 1   -- invisível quando desligado
+	floorPart.Material = Enum.Material.Neon
+	floorPart.BrickColor = BrickColor.new("Bright blue")
+	floorPart.TopSurface = Enum.SurfaceType.Smooth
+	floorPart.BottomSurface = Enum.SurfaceType.Smooth
+	floorPart.Parent = workspace
 end
 
--- Cria botão na tela
-createButton()
+-- Atualiza posição do piso para ficar logo abaixo do jogador
+local function updateFloorPosition()
+	if not floorPart or not floorPart.Parent then return end
+	local hrp = getHRP()
+	-- 4 studs abaixo do centro do corpo evita empurrões estranhos
+	floorPart.CFrame = hrp.CFrame * CFrame.new(0, -4, 0)
+end
 
--- Inicia verificação de proximidade
-spawn(checkProximity)
+-- Liga o piso
+local function activateFloor()
+	ensureFloor()
+	floorActive = true
+	floorPart.CanCollide = true
+	floorPart.Transparency = 0.2
+
+	-- Segue o jogador todo frame no cliente (suave)
+	if followConn then followConn:Disconnect() end
+	followConn = RunService.RenderStepped:Connect(function()
+		if floorActive then
+			updateFloorPosition()
+		end
+	end)
+	updateFloorPosition()
+end
+
+-- Desliga o piso
+local function deactivateFloor()
+	floorActive = false
+	if followConn then
+		followConn:Disconnect()
+		followConn = nil
+	end
+	if floorPart and floorPart.Parent then
+		-- Em vez de destruir, deixamos pronto para ligar de novo
+		floorPart.CanCollide = false
+		floorPart.Transparency = 1
+	end
+end
+
+-- Alterna
+local function toggleFloor()
+	if floorActive then
+		deactivateFloor()
+	else
+		activateFloor()
+	end
+	updateButtonUI()
+end
+
+-- Reage a respawns: mantém a funcionalidade
+player.CharacterAdded:Connect(function(newChar)
+	character = newChar
+	if floorActive then
+		-- Reposiciona o piso para o novo personagem
+		task.defer(updateFloorPosition)
+	end
+end)
+
+----------------------------------------------------------------
+-- GUI: botão na tela
+----------------------------------------------------------------
+local function createGui()
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "FloorToggleGui"
+	gui.ResetOnSpawn = false
+	gui.IgnoreGuiInset = true
+	gui.Parent = player:WaitForChild("PlayerGui")
+
+	local btn = Instance.new("TextButton")
+	btn.Name = "ToggleButton"
+	btn.Size = UDim2.fromOffset(140, 48)
+	btn.Position = UDim2.new(1, -156, 1, -68) -- canto inferior direito
+	btn.AnchorPoint = Vector2.new(0, 0)
+	btn.TextScaled = true
+	btn.Font = Enum.Font.GothamBold
+	btn.BackgroundTransparency = 0.1
+	btn.Text = "Piso: OFF"
+	btn.Parent = gui
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 12)
+	corner.Parent = btn
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Thickness = 2
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Parent = btn
+
+	btn.MouseButton1Click:Connect(function()
+		toggleFloor()
+	end)
+end
+
+function updateButtonUI()
+	local gui = player:FindFirstChild("PlayerGui")
+	if not gui then return end
+	local screen = gui:FindFirstChild("FloorToggleGui")
+	if not screen then return end
+	local btn = screen:FindFirstChild("ToggleButton")
+	if not btn then return end
+	btn.Text = floorActive and "Piso: ON" or "Piso: OFF"
+end
+
+createGui()
+updateButtonUI()
+
+----------------------------------------------------------------
+-- Atalho no teclado: tecla F
+----------------------------------------------------------------
+UIS.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end
+	if input.KeyCode == Enum.KeyCode.F then
+		toggleFloor()
+	end
+end)
